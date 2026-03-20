@@ -35,6 +35,16 @@ def read_data():
         print("Read error:", e)
     return timestamps, voltage, current, power, soc
 
+# ── Clear the log file (keep header row only) ─────────────────────────────────
+def clear_log():
+    try:
+        with open(CSV_FILE, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Timestamp", "Voltage", "Current", "Power", "SOC"])
+        print(f"Cleared {CSV_FILE} for new session.")
+    except Exception as e:
+        print(f"Could not clear {CSV_FILE}: {e}")
+
 # ── Validation ────────────────────────────────────────────────────────────────
 def validate_serial(text):
     t = text.strip()
@@ -56,7 +66,7 @@ serial_box = mwidgets.TextBox(ax_serial, "Serial: ", initial="",
                                color="white", hovercolor="#f0f0f0")
 serial_box.label.set_fontsize(9)
 
-# --- Truck type radio (RS1 / CR1) — no label ---
+# --- Truck type radio (RS1 / CR1) ---
 ax_truck = fig.add_axes([0.30, 0.900, 0.16, 0.075])
 ax_truck.set_facecolor(fig.get_facecolor())
 for spine in ax_truck.spines.values():
@@ -68,7 +78,7 @@ radio_truck = mwidgets.RadioButtons(ax_truck, ("RS1", "CR1"),
 for lbl in radio_truck.labels:
     lbl.set_fontsize(9)
 
-# --- Load status radio (Unloaded / Loaded) — no label ---
+# --- Load status radio (Unloaded / Loaded) ---
 ax_load = fig.add_axes([0.49, 0.900, 0.18, 0.075])
 ax_load.set_facecolor(fig.get_facecolor())
 for spine in ax_load.spines.values():
@@ -145,6 +155,10 @@ def on_start(event):
     if logging_active:
         set_status("Already logging - press Stop first", "crimson")
         return
+
+    # Clear the log so this session starts fresh
+    clear_log()
+
     serial_number  = text.strip()
     logging_active = True
     log_start_time = datetime.now()
