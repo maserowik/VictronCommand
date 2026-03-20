@@ -61,7 +61,7 @@ with open("victron_log.csv", "a", newline="") as f:
                 power = float(data["P"])
                 soc = float(data["SOC"]) / 10
 
-                # 🔍 Filter obviously bad data
+                # Filter obviously bad data
                 if voltage <= 0:
                     data = {}
                     continue
