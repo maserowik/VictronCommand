@@ -1,0 +1,40 @@
+# --------------------------
+# Python
+# --------------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.swp
+*.pdb
+*.egg
+*.egg-info/
+dist/
+build/
+*.so
+*.dll
+*.dylib
+
+# --------------------------
+# Virtual environments
+# --------------------------
+venv/
+env/
+ENV/
+.venv/
+.victron
+
+# --------------------------
+# OS / Editor
+# --------------------------
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+*~
+.project
+.pydevproject
+
+*.csv
