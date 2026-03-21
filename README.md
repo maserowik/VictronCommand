@@ -13,11 +13,12 @@ A two-script Python tool for logging and live-plotting battery data from a Victr
 5. [Usage](#usage)
 6. [Serial Number Validation](#serial-number-validation)
 7. [Session Recording](#session-recording)
-8. [Saved File Naming and Location](#saved-file-naming-and-location)
-9. [Charts](#charts)
-10. [File Overview](#file-overview)
-11. [Notes](#notes)
-12. [Revision Control](#revision-control)
+8. [Session Controls and Behaviour](#session-controls-and-behaviour)
+9. [Saved File Naming and Location](#saved-file-naming-and-location)
+10. [Charts](#charts)
+11. [File Overview](#file-overview)
+12. [Notes](#notes)
+13. [Revision Control](#revision-control)
 
 ---
 
@@ -128,7 +129,7 @@ python victron_live_graph.py
 
 ## Serial Number Validation
 
-The serial number field in the live graph enforces the following rules before a session can be started:
+The serial number field enforces the following rules before a session can be started:
 
 | Rule | Detail |
 |---|---|
@@ -147,10 +148,58 @@ In the live graph window:
 1. Select **Truck Type** — `RS1` or `CR1`
 2. Select **Load Status** — `Unloaded` or `Loaded`
 3. Enter the **Serial Number** — must pass validation rules above (e.g. `9876567894`)
-4. Press **Start** — clears `victron_log.csv` so the session starts fresh, then begins live plotting
-5. Press **Stop** — halts plotting and saves the session data to the structured output folder
+4. Press **Start** — clears `victron_log.csv`, locks controls, draws the session start marker on the charts, and begins live plotting
+5. Press **Stop** — halts plotting, shows a session summary, unlocks controls, and saves the session CSV
 
 > **Note:** Pressing Start clears `victron_log.csv` immediately. Any data from a previous session that has not been saved will be lost. Always press Stop and confirm the save before starting a new session.
+
+---
+
+## Session Controls and Behaviour
+
+### Control Locking
+
+Once **Start** is pressed the serial number field and both radio button groups (Truck Type and Load Status) are locked and cannot be changed until **Stop** is pressed. This prevents accidental mid-session changes that would cause the saved filename and folder to be inconsistent with the data collected.
+
+### Session Start Marker
+
+A green dashed vertical line is drawn on all four charts at the exact timestamp when **Start** was pressed. This makes the session boundary visible in the data, particularly when the chart is showing data that spans more than one session start.
+
+### Minimum Session Duration Warning
+
+If **Stop** is pressed within 10 seconds of pressing **Start**, a warning dialog is shown:
+
+```
+The session ran for only X seconds (minimum recommended: 10s).
+The recorded data may not be meaningful.
+Save anyway?
+```
+
+Selecting **No** returns to the active logging state without saving. Selecting **Yes** proceeds with the save.
+
+### Session Summary
+
+When **Stop** is pressed (and the save is confirmed for short sessions), a summary popup is displayed before the file is saved:
+
+```
+Session Duration:   Xm Ys
+Data Points:        N
+
+Voltage  (V):   min X.XXX   avg X.XXX   max X.XXX
+Current  (A):   min X.XXX   avg X.XXX   max X.XXX
+Power    (W):   min X.XXX   avg X.XXX   max X.XXX
+SOC      (%):   min X.XXX   avg X.XXX   max X.XXX
+```
+
+### Watchdog — Logger Health Monitor
+
+The live graph monitors whether `victron_log.csv` is actively receiving new rows from the logger. If no new data has arrived for 10 seconds during an active session, the status bar changes to a red warning:
+
+```
+WARNING: No new data for Xs — check logger is running and device is connected
+```
+
+If the logger resumes (e.g. after a cable reconnection), the status bar automatically returns to the normal green logging state.
 
 ---
 
@@ -211,7 +260,7 @@ The live graph displays four subplots, updated every second:
 | Power | W | Instantaneous power draw |
 | State of Charge | % | Battery SOC as reported by the Victron BMS |
 
-Up to the last 200 valid data points are displayed. Zero-value rows produced by partial serial frames are filtered out automatically before plotting.
+Up to the last 200 valid data points are displayed. Zero-value rows produced by partial serial frames are filtered out automatically before plotting. A green dashed vertical line marks the session start time on each chart.
 
 ---
 
@@ -232,7 +281,8 @@ Up to the last 200 valid data points are displayed. Zero-value rows produced by 
 - `victron_log.csv` and all saved session CSV files are excluded from git via `.gitignore` (`*.csv`). Session files are saved to `Documents\VictronConnect\test_results\` and should be backed up or archived from there as needed.
 - The logger communicates at **19200 baud** as required by the VE.Direct protocol.
 - Both scripts read and write `victron_log.csv` independently — the logger appends rows continuously while the graph reads the last 200 rows on each refresh cycle.
-- The output root path on Windows is hardcoded to `C:\Users\mserowik\Documents\VictronConnect\test_results`. If the username or path differs, update `OUTPUT_ROOT` in `victron_live_graph.py`.
+- The Windows output root path is hardcoded to `C:\Users\mserowik\Documents\VictronConnect\test_results`. If the username or path differs, update `OUTPUT_ROOT` in `victron_live_graph.py`.
+- The minimum session duration and watchdog timeout are defined as constants at the top of `victron_live_graph.py` (`MIN_SESSION_SECONDS` and `WATCHDOG_TIMEOUT_SEC`) and can be adjusted if needed.
 
 ---
 
@@ -241,7 +291,7 @@ Up to the last 200 valid data points are displayed. Zero-value rows produced by 
 All changes to this documentation must be reviewed and approved in accordance with Seegrid documentation standards.
 
 **Last Updated:** March 2026
-**Version:** 1.4
+**Version:** 1.5
 
 ---
 

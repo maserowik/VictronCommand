@@ -4,6 +4,7 @@ import platform
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import matplotlib.widgets as mwidgets
+import matplotlib.patches as mpatches
 from matplotlib.animation import FuncAnimation
 from datetime import datetime
 from pathlib import Path
@@ -18,12 +19,20 @@ if platform.system() == "Windows":
 else:
     OUTPUT_ROOT = Path.home() / "Documents" / "VictronConnect" / "test_results"
 
+# ── Constants ─────────────────────────────────────────────────────────────────
+MIN_SESSION_SECONDS  = 10    # warn if Stop pressed sooner than this
+WATCHDOG_TIMEOUT_SEC = 10    # warn if no new rows arrive within this window
+
 # ── State ─────────────────────────────────────────────────────────────────────
-logging_active = False
-serial_number  = ""
-truck_type     = "RS1"
-load_status    = "Unloaded"
-log_start_time = None
+logging_active  = False
+serial_number   = ""
+truck_type      = "RS1"
+load_status     = "Unloaded"
+log_start_time  = None
+last_row_time   = None   # wall-clock time the last new CSV row was detected
+last_row_count  = 0      # used to detect whether new rows have arrived
+watchdog_warned = False  # only show the watchdog warning once per session
+start_marker_dt = None   # datetime of the Start press — drawn on charts
 
 # ── Data reader ───────────────────────────────────────────────────────────────
 def read_data():
@@ -44,6 +53,14 @@ def read_data():
     except Exception as e:
         print("Read error:", e)
     return timestamps, voltage, current, power, soc
+
+def get_raw_row_count():
+    """Return total number of data rows in the CSV (excluding header)."""
+    try:
+        with open(CSV_FILE, "r") as f:
+            return sum(1 for _ in f) - 1
+    except Exception:
+        return 0
 
 # ── Clear the log file (keep header row only) ─────────────────────────────────
 def clear_log():
@@ -142,6 +159,48 @@ line_i = setup_ax(ax_i, "Current",          "A",  "tomato")
 line_p = setup_ax(ax_p, "Power",            "W",  "darkorange")
 line_s = setup_ax(ax_s, "State of Charge",  "%",  "seagreen")
 
+# Keep track of start marker vertical lines so we can remove old ones
+start_marker_lines = []
+
+# ── Lock / unlock controls ────────────────────────────────────────────────────
+def lock_controls():
+    """Disable serial entry and radio buttons while logging is active."""
+    serial_box.set_active(False)
+    serial_box.color         = "#e8e8e8"
+    serial_box.hovercolor    = "#e8e8e8"
+    ax_serial.set_facecolor("#e8e8e8")
+    for rb in (radio_truck, radio_load):
+        for circle in rb.circles:
+            circle.set_visible(False)
+        for lbl in rb.labels:
+            lbl.set_color("gray")
+
+def unlock_controls():
+    """Re-enable serial entry and radio buttons after logging stops."""
+    serial_box.set_active(True)
+    serial_box.color         = "white"
+    serial_box.hovercolor    = "#f0f0f0"
+    ax_serial.set_facecolor("white")
+    for rb in (radio_truck, radio_load):
+        for circle in rb.circles:
+            circle.set_visible(True)
+        for lbl in rb.labels:
+            lbl.set_color("black")
+
+# ── Start marker on charts ────────────────────────────────────────────────────
+def draw_start_markers(dt):
+    """Draw a vertical dashed line at the session start time on all four charts."""
+    for line in start_marker_lines:
+        try:
+            line.remove()
+        except Exception:
+            pass
+    start_marker_lines.clear()
+    for ax in (ax_v, ax_i, ax_p, ax_s):
+        vl = ax.axvline(dt, color="green", linewidth=1.0,
+                        linestyle="--", alpha=0.7, label="Session Start")
+        start_marker_lines.append(vl)
+
 # ── Radio callbacks ───────────────────────────────────────────────────────────
 def on_truck_select(label):
     global truck_type
@@ -157,6 +216,8 @@ radio_load.on_clicked(on_load_select)
 # ── Button callbacks ──────────────────────────────────────────────────────────
 def on_start(event):
     global logging_active, serial_number, log_start_time
+    global last_row_time, last_row_count, watchdog_warned, start_marker_dt
+
     text = serial_box.text
     valid, msg = validate_serial(text)
     if not valid:
@@ -168,9 +229,17 @@ def on_start(event):
 
     clear_log()
 
-    serial_number  = text.strip()
-    logging_active = True
-    log_start_time = datetime.now()
+    serial_number   = text.strip()
+    logging_active  = True
+    log_start_time  = datetime.now()
+    start_marker_dt = log_start_time
+    last_row_time   = datetime.now()
+    last_row_count  = 0
+    watchdog_warned = False
+
+    lock_controls()
+    draw_start_markers(start_marker_dt)
+
     set_status(
         f"Logging  |  Serial: {serial_number}  |  "
         f"Truck: {truck_type}  |  Load: {load_status}  |  "
@@ -183,22 +252,73 @@ def on_stop(event):
     if not logging_active:
         set_status("Not currently logging", "crimson")
         return
+
+    # ── Minimum session duration warning ─────────────────────────────────────
+    elapsed = (datetime.now() - log_start_time).total_seconds()
+    if elapsed < MIN_SESSION_SECONDS:
+        answer = _confirm_short_session(elapsed)
+        if not answer:
+            set_status(
+                f"Logging  |  Serial: {serial_number}  |  "
+                f"Truck: {truck_type}  |  Load: {load_status}  |  "
+                f"Started: {log_start_time.strftime('%H:%M:%S')}",
+                "green"
+            )
+            return
+
     logging_active = False
+    unlock_controls()
+
+    # ── Session summary popup ─────────────────────────────────────────────────
+    ts, v, i, p, s = read_data()
+    if v:
+        _show_summary(elapsed, v, i, p, s)
+
     save_csv()
 
-def save_csv():
-    """
-    Mirror gui.py output folder structure:
-        {OUTPUT_ROOT}/{truck}/{serial}/{load}/{timestamp}/
-        {TruckType}_{SerialNumber}_{LoadStatus}_{YYYY-MM-DD_HH-MM}.csv
+def _confirm_short_session(elapsed):
+    """Return True if the operator confirms saving a very short session."""
+    import tkinter as tk
+    from tkinter import messagebox
+    root = tk.Tk()
+    root.withdraw()
+    answer = messagebox.askyesno(
+        "Short Session Warning",
+        f"The session ran for only {elapsed:.0f} seconds "
+        f"(minimum recommended: {MIN_SESSION_SECONDS}s).\n\n"
+        "The recorded data may not be meaningful.\n\n"
+        "Save anyway?"
+    )
+    root.destroy()
+    return answer
 
-    Example:
-        C:\\Users\\mserowik\\Documents\\VictronConnect\\test_results\\
-            RS1\\9876567894\\Unloaded\\2026-03-20_14-43\\
-                RS1_9876567894_Unloaded_2026-03-20_14-43.csv
-    """
-    ts        = log_start_time.strftime("%Y-%m-%d_%H-%M")
-    filename  = f"{truck_type}_{serial_number}_{load_status}_{ts}.csv"
+def _show_summary(elapsed, v, i, p, s):
+    """Display a session summary popup with min / max / average per metric."""
+    import tkinter as tk
+    from tkinter import messagebox
+
+    def fmt(data):
+        return f"min {min(data):.3f}   avg {sum(data)/len(data):.3f}   max {max(data):.3f}"
+
+    mins, secs = divmod(int(elapsed), 60)
+    summary = (
+        f"Session Duration:   {mins}m {secs}s\n"
+        f"Data Points:        {len(v)}\n"
+        "\n"
+        f"Voltage  (V):   {fmt(v)}\n"
+        f"Current  (A):   {fmt(i)}\n"
+        f"Power    (W):   {fmt(p)}\n"
+        f"SOC      (%):   {fmt(s)}\n"
+    )
+    root = tk.Tk()
+    root.withdraw()
+    messagebox.showinfo("Session Summary", summary)
+    root.destroy()
+
+# ── Save CSV ──────────────────────────────────────────────────────────────────
+def save_csv():
+    ts         = log_start_time.strftime("%Y-%m-%d_%H-%M")
+    filename   = f"{truck_type}_{serial_number}_{load_status}_{ts}.csv"
     output_dir = OUTPUT_ROOT / truck_type / serial_number / load_status / ts
 
     try:
@@ -216,16 +336,46 @@ btn_stop.on_clicked(on_stop)
 
 # ── Animation loop ────────────────────────────────────────────────────────────
 def update(_frame):
+    global last_row_time, last_row_count, watchdog_warned
+
     if not logging_active:
         return
+
+    # ── Watchdog — detect if logger has stopped feeding data ─────────────────
+    current_count = get_raw_row_count()
+    if current_count > last_row_count:
+        last_row_count = current_count
+        last_row_time  = datetime.now()
+        if watchdog_warned:
+            # Data has resumed — clear the warning
+            watchdog_warned = False
+            set_status(
+                f"Logging  |  Serial: {serial_number}  |  "
+                f"Truck: {truck_type}  |  Load: {load_status}  |  "
+                f"Started: {log_start_time.strftime('%H:%M:%S')}",
+                "green"
+            )
+    else:
+        gap = (datetime.now() - last_row_time).total_seconds()
+        if gap >= WATCHDOG_TIMEOUT_SEC and not watchdog_warned:
+            watchdog_warned = True
+            set_status(
+                f"WARNING: No new data for {gap:.0f}s — "
+                "check logger is running and device is connected",
+                "crimson"
+            )
+
+    # ── Update charts ─────────────────────────────────────────────────────────
     ts, v, i, p, s = read_data()
     if not ts:
         return
+
     for line, data in [(line_v, v), (line_i, i), (line_p, p), (line_s, s)]:
         line.set_data(ts, data)
         ax = line.axes
         ax.relim()
         ax.autoscale_view()
+
     fig.canvas.draw_idle()
 
 ani = FuncAnimation(fig, update, interval=1000, cache_frame_data=False)

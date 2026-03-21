@@ -10,6 +10,60 @@ All notable changes to this project are documented in this file. Entries are org
 
 #### Features Added
 
+**1. Control Locking on Session Start**
+
+- The serial number entry field and both radio button groups (Truck Type and Load Status) are now locked when **Start** is pressed and unlocked when **Stop** is pressed.
+- Locking is implemented by disabling the `TextBox` widget and hiding the radio button circles while greying out their labels.
+- Prevents accidental mid-session changes that would cause the saved filename and output folder path to be inconsistent with the data collected.
+
+**2. Session Start Marker on Charts**
+
+- A green dashed vertical line is drawn at the session start timestamp on all four charts immediately when **Start** is pressed.
+- The marker is drawn using `ax.axvline()` and stored in a list so it can be removed and redrawn if a new session is started.
+- Makes the session boundary clearly visible in the chart data, especially useful when the rolling window spans data from before the session started.
+
+**3. Minimum Session Duration Warning**
+
+- If **Stop** is pressed within 10 seconds of pressing **Start**, a `tkinter` warning dialog is shown before saving.
+- The dialog displays the actual elapsed time, the minimum recommended duration, and a yes/no prompt to confirm whether to save.
+- Selecting **No** returns to the active logging state without saving or stopping the session.
+- Selecting **Yes** proceeds with the normal stop, summary, and save flow.
+- The minimum duration threshold is defined as `MIN_SESSION_SECONDS = 10` at the top of the script and can be adjusted.
+
+**4. Session Summary Popup on Stop**
+
+- When **Stop** is pressed (after any short-session confirmation), a `tkinter` info dialog displays a summary of the completed session before the file is saved.
+- Summary includes: session duration (minutes and seconds), number of valid data points, and min / average / max for Voltage, Current, Power, and State of Charge.
+- Gives the operator an at-a-glance sanity check before walking away from the test.
+
+**5. Watchdog — Logger Health Monitor**
+
+- During an active session, the animation loop compares the current row count in `victron_log.csv` against the count from the previous tick.
+- If no new rows have appeared for 10 seconds, the status bar switches to a red warning message indicating the logger may have stopped or the device may be disconnected.
+- If new rows resume after the warning, the status bar automatically clears the warning and returns to the normal green logging state.
+- The watchdog timeout is defined as `WATCHDOG_TIMEOUT_SEC = 10` at the top of the script and can be adjusted.
+- Only one warning is shown per gap event — the warning does not repeat every tick.
+
+### README.md
+
+#### Updated
+
+**1. Session Controls and Behaviour Section**
+
+- Added new section documenting all five new session behaviours: control locking, start marker, minimum session duration warning, session summary, and watchdog.
+- Updated Session Recording step list to reflect that Start now also locks controls and draws the start marker.
+- Updated Charts section to note the green dashed start marker line.
+- Added note to the Notes section documenting the `MIN_SESSION_SECONDS` and `WATCHDOG_TIMEOUT_SEC` constants.
+- Updated version to 1.5.
+
+---
+
+## [2026-03-20]
+
+### victron_live_graph.py
+
+#### Features Added
+
 **1. Structured Output Folder — Mirrors Hydraulic Automated Testing Tool**
 
 - Saved CSV files are no longer written to the script's working directory. Results are now saved to a structured folder under `C:\Users\mserowik\Documents\VictronConnect\test_results\` on Windows and `~/Documents/VictronConnect/test_results/` on Linux.
@@ -171,3 +225,4 @@ All notable changes to this project are documented in this file. Entries are org
 - The logger serial port defaults are `COM15` (Windows) and `/dev/ttyUSB0` (Linux). If your system uses a different port, `get_port()` in `victron_logger.py` must be edited manually — there is no GUI port selector.
 - The Windows output root path is hardcoded to `C:\Users\mserowik\Documents\VictronConnect\test_results`. If the username or path differs, update `OUTPUT_ROOT` in `victron_live_graph.py`.
 - There is a brief moment after pressing Start where `victron_log.csv` contains only the header row while the logger has not yet appended new data. The charts will appear empty for up to one second before new readings arrive.
+- The session summary popup calculates statistics from the rolling 200-row window, not the full session. For very long sessions the summary reflects only the most recent data points.
