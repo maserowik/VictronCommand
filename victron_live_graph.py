@@ -1,12 +1,22 @@
 import csv
 import shutil
+import platform
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import matplotlib.widgets as mwidgets
 from matplotlib.animation import FuncAnimation
 from datetime import datetime
+from pathlib import Path
 
 CSV_FILE = "victron_log.csv"
+
+# ── Output root — mirrors gui.py test_results structure ───────────────────────
+# Windows : C:\Users\mserowik\Documents\VictronConnect\test_results
+# Linux   : ~/Documents/VictronConnect/test_results
+if platform.system() == "Windows":
+    OUTPUT_ROOT = Path(r"C:\Users\mserowik\Documents\VictronConnect\test_results")
+else:
+    OUTPUT_ROOT = Path.home() / "Documents" / "VictronConnect" / "test_results"
 
 # ── State ─────────────────────────────────────────────────────────────────────
 logging_active = False
@@ -156,7 +166,6 @@ def on_start(event):
         set_status("Already logging - press Stop first", "crimson")
         return
 
-    # Clear the log so this session starts fresh
     clear_log()
 
     serial_number  = text.strip()
@@ -178,12 +187,26 @@ def on_stop(event):
     save_csv()
 
 def save_csv():
-    ts  = log_start_time.strftime("%Y-%m-%d_%H-%M")
-    out = f"{truck_type}_{serial_number}_{load_status}_{ts}.csv"
+    """
+    Mirror gui.py output folder structure:
+        {OUTPUT_ROOT}/{truck}/{serial}/{load}/{timestamp}/
+        {TruckType}_{SerialNumber}_{LoadStatus}_{YYYY-MM-DD_HH-MM}.csv
+
+    Example:
+        C:\\Users\\mserowik\\Documents\\VictronConnect\\test_results\\
+            RS1\\9876567894\\Unloaded\\2026-03-20_14-43\\
+                RS1_9876567894_Unloaded_2026-03-20_14-43.csv
+    """
+    ts        = log_start_time.strftime("%Y-%m-%d_%H-%M")
+    filename  = f"{truck_type}_{serial_number}_{load_status}_{ts}.csv"
+    output_dir = OUTPUT_ROOT / truck_type / serial_number / load_status / ts
+
     try:
-        shutil.copy2(CSV_FILE, out)
-        set_status(f"Saved: {out}", "steelblue")
-        print(f"Saved: {out}")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        dest = output_dir / filename
+        shutil.copy2(CSV_FILE, dest)
+        set_status(f"Saved: {dest}", "steelblue")
+        print(f"Saved: {dest}")
     except Exception as e:
         set_status(f"Save failed: {e}", "crimson")
         print(f"Save error: {e}")
