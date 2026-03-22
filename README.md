@@ -1,6 +1,6 @@
 # Victron Battery Monitor
 
-A two-script Python tool for logging and live-plotting battery data from a Victron Battery Monitor over serial (VE.Direct protocol). Designed for use alongside hydraulic testing on Seegrid RS1 and CR1 trucks to monitor battery state during test sessions.
+A single-script Python tool for logging and live-plotting battery data from a Victron Battery Monitor over serial (VE.Direct protocol). Designed for use alongside hydraulic testing on Seegrid RS1 and CR1 trucks to monitor battery state during test sessions.
 
 ---
 
@@ -60,8 +60,7 @@ This tool applies to QC personnel performing battery monitoring during hydraulic
 Ensure the following files are present in the same directory:
 
 ```
-victron_logger.py
-victron_live_graph.py
+victron_monitor.py
 requirements.txt
 ```
 
@@ -95,35 +94,21 @@ pip install -r requirements.txt
 
 ## Usage
 
-Both scripts must run simultaneously in separate terminals.
-
-### Terminal 1 — Start the logger
-
-The logger must be started first. It connects to the Victron device over serial and continuously writes data to `victron_log.csv`.
+Run the single combined script. The serial logger starts automatically in the background — no second terminal is needed.
 
 **Linux:**
 ```bash
-python3 victron_logger.py
+python3 victron_monitor.py
 ```
 
 **Windows:**
 ```bash
-python victron_logger.py
+python victron_monitor.py
 ```
 
-The logger runs until stopped with `CTRL+C`. The default serial port is `/dev/ttyUSB0` on Linux and `COM15` on Windows. Edit `get_port()` in `victron_logger.py` if your port differs.
+The logger automatically scans all available COM ports on launch and connects to the Victron VE.Direct USB adapter by matching its USB Vendor ID and Product ID. No manual port configuration is required. The status bar shows the current connection state.
 
-### Terminal 2 — Start the live graph
-
-**Linux:**
-```bash
-python3 victron_live_graph.py
-```
-
-**Windows:**
-```bash
-python victron_live_graph.py
-```
+If the device is unplugged and reconnected — even on a different COM port — the logger will detect and reconnect to it automatically within 5 seconds.
 
 ---
 
@@ -163,7 +148,7 @@ Once **Start** is pressed the serial number field and both radio button groups (
 
 ### Session Start Marker
 
-A green dashed vertical line is drawn on all four charts at the exact timestamp when **Start** was pressed. This makes the session boundary visible in the data, particularly when the chart is showing data that spans more than one session start.
+A green dashed vertical line is drawn on all four charts at the exact timestamp when **Start** was pressed. This makes the session boundary visible in the data.
 
 ### Minimum Session Duration Warning
 
@@ -179,7 +164,7 @@ Selecting **No** returns to the active logging state without saving. Selecting *
 
 ### Session Summary
 
-When **Stop** is pressed (and the save is confirmed for short sessions), a summary popup is displayed before the file is saved:
+When **Stop** is pressed, a summary popup is displayed before the file is saved:
 
 ```
 Session Duration:   Xm Ys
@@ -193,13 +178,23 @@ SOC      (%):   min X.XXX   avg X.XXX   max X.XXX
 
 ### Watchdog — Logger Health Monitor
 
-The live graph monitors whether `victron_log.csv` is actively receiving new rows from the logger. If no new data has arrived for 10 seconds during an active session, the status bar changes to a red warning:
+During an active session, the live graph monitors whether `victron_log.csv` is actively receiving new rows. If no new data has arrived for 10 seconds, the status bar changes to a red warning:
 
 ```
-WARNING: No new data for Xs — check logger is running and device is connected
+WARNING: No new data for Xs — check device is connected
 ```
 
-If the logger resumes (e.g. after a cable reconnection), the status bar automatically returns to the normal green logging state.
+If the logger reconnects and data resumes, the status bar automatically returns to the normal green logging state.
+
+### Logger Status
+
+When no session is active, the status bar displays the current logger connection state, for example:
+
+```
+Logger: Connected: COM3
+Logger: Searching for Victron device...
+Logger: Disconnected from COM3 — searching again in 5s
+```
 
 ---
 
@@ -245,7 +240,7 @@ C:\Users\mserowik\Documents\VictronConnect\test_results\
           RS1_9876567894_Unloaded_2026-03-20_14-43.csv
 ```
 
-The output directory is created automatically if it does not exist. The timestamp in the folder name and filename reflects when **Start** was pressed.
+The output directory is created automatically if it does not exist. The timestamp reflects when **Start** was pressed.
 
 ---
 
@@ -268,9 +263,8 @@ Up to the last 200 valid data points are displayed. Zero-value rows produced by 
 
 | File | Purpose |
 |---|---|
-| `victron_logger.py` | Reads VE.Direct serial data and writes to `victron_log.csv` |
-| `victron_live_graph.py` | Live chart display with session controls |
-| `victron_log.csv` | Working log file — written by the logger, cleared on each new session start |
+| `victron_monitor.py` | Combined serial logger and live graph — single entry point |
+| `victron_log.csv` | Working log file — written by the logger thread, cleared on each new session start |
 | `requirements.txt` | Pinned Python package dependencies |
 | `.gitignore` | Excludes CSV files, virtual environments, and OS/editor artifacts from git |
 
@@ -280,9 +274,11 @@ Up to the last 200 valid data points are displayed. Zero-value rows produced by 
 
 - `victron_log.csv` and all saved session CSV files are excluded from git via `.gitignore` (`*.csv`). Session files are saved to `Documents\VictronConnect\test_results\` and should be backed up or archived from there as needed.
 - The logger communicates at **19200 baud** as required by the VE.Direct protocol.
-- Both scripts read and write `victron_log.csv` independently — the logger appends rows continuously while the graph reads the last 200 rows on each refresh cycle.
-- The Windows output root path is hardcoded to `C:\Users\mserowik\Documents\VictronConnect\test_results`. If the username or path differs, update `OUTPUT_ROOT` in `victron_live_graph.py`.
-- The minimum session duration and watchdog timeout are defined as constants at the top of `victron_live_graph.py` (`MIN_SESSION_SECONDS` and `WATCHDOG_TIMEOUT_SEC`) and can be adjusted if needed.
+- Port detection matches on USB Vendor ID `0x0403` and Product ID `0x6015` (FTDI FT230X — used by the Victron VE.Direct-USB cable). If the OS does not expose VID/PID, the tool falls back to matching the port description string for "victron" or "VE.Direct".
+- The logger thread runs as a daemon — it shuts down automatically when the window is closed.
+- If `pyserial` is not installed, the logger thread reports an error in the status bar but the GUI will still open. Install dependencies via `pip install -r requirements.txt` to restore full functionality.
+- The Windows output root path is hardcoded to `C:\Users\mserowik\Documents\VictronConnect\test_results`. If the username or path differs, update `OUTPUT_ROOT` in `victron_monitor.py`.
+- The minimum session duration and watchdog timeout are defined as constants at the top of `victron_monitor.py` (`MIN_SESSION_SECONDS` and `WATCHDOG_TIMEOUT_SEC`) and can be adjusted if needed.
 
 ---
 
@@ -291,7 +287,7 @@ Up to the last 200 valid data points are displayed. Zero-value rows produced by 
 All changes to this documentation must be reviewed and approved in accordance with Seegrid documentation standards.
 
 **Last Updated:** March 2026
-**Version:** 1.5
+**Version:** 2.1
 
 ---
 

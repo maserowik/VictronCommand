@@ -6,55 +6,88 @@ All notable changes to this project are documented in this file. Entries are org
 
 ## [2026-03-20]
 
+### victron_monitor.py
+
+#### Features Added
+
+**1. Automatic COM Port Detection by USB VID/PID**
+
+- Removed the hardcoded `SERIAL_PORT` constant. The logger now scans all available serial ports on every connection attempt and automatically connects to the Victron VE.Direct USB adapter.
+- Port detection uses `serial.tools.list_ports.comports()` to enumerate all available ports and matches on USB Vendor ID `0x0403` and Product ID `0x6015` — the FTDI FT230X chip used in the Victron VE.Direct-USB cable.
+- Falls back to a description string match for "victron" or "VE.Direct" on systems where the OS does not expose USB VID/PID information.
+- If the device is unplugged and reconnected on a different COM port, the logger detects and connects to the new port automatically within 5 seconds — no restart required.
+- If no matching device is found, the status bar shows `Searching for Victron device...` and the logger retries every 5 seconds.
+- The VID and PID values are defined as named constants (`VICTRON_VID` and `VICTRON_PID`) at the top of the script for easy reference.
+- Status bar messages updated to reflect the detected port name rather than a hardcoded value (e.g. `Connected: COM3` instead of `Connected: COM15`).
+- Disconnection message updated to: `Disconnected from {port} — searching again in 5s`.
+
+### README.md
+
+#### Updated
+
+**1. USB Port Detection Documentation**
+
+- Updated Usage section — removed manual port configuration note, replaced with description of automatic port detection behaviour.
+- Added note explaining reconnection behaviour when device is unplugged and reconnected on a different COM port.
+- Added note in the Notes section documenting the VID/PID values used for detection and the description-string fallback.
+- Updated Logger Status examples to show dynamic port name (e.g. `COM3`) instead of hardcoded port.
+- Updated version to 2.1.
+
+---
+
+## [2026-03-20]
+
+### victron_monitor.py
+
+#### Features Added — Script Consolidation
+
+**1. Combined Logger and Live Graph — Single Script**
+
+- `victron_logger.py` and `victron_live_graph.py` merged into `victron_monitor.py`.
+- Serial logger runs in a background `threading.Thread(daemon=True)` that starts automatically on launch.
+- Logger reconnects automatically every 5 seconds on any error or disconnection.
+- Graceful fallback if `pyserial` is not installed — GUI opens with an error in the status bar.
+- Logger thread shuts down cleanly when the window is closed.
+
+**2. Logger Status in the Status Bar**
+
+- Status bar shows current logger connection state when no session is active.
+
+**3. Configurable Constants**
+
+- `SERIAL_PORT`, `OUTPUT_ROOT`, `BAUD`, `MIN_SESSION_SECONDS`, and `WATCHDOG_TIMEOUT_SEC` all defined as named constants at the top of the script.
+
+---
+
+## [2026-03-20]
+
 ### victron_live_graph.py
 
 #### Features Added
 
 **1. Control Locking on Session Start**
 
-- The serial number entry field and both radio button groups (Truck Type and Load Status) are now locked when **Start** is pressed and unlocked when **Stop** is pressed.
-- Locking is implemented by disabling the `TextBox` widget and hiding the radio button circles while greying out their labels.
-- Prevents accidental mid-session changes that would cause the saved filename and output folder path to be inconsistent with the data collected.
+- Serial field and radio buttons locked on Start, unlocked on Stop.
+- Prevents mid-session changes inconsistent with the saved filename and folder.
 
 **2. Session Start Marker on Charts**
 
-- A green dashed vertical line is drawn at the session start timestamp on all four charts immediately when **Start** is pressed.
-- The marker is drawn using `ax.axvline()` and stored in a list so it can be removed and redrawn if a new session is started.
-- Makes the session boundary clearly visible in the chart data, especially useful when the rolling window spans data from before the session started.
+- Green dashed vertical line drawn at session start time on all four charts.
 
 **3. Minimum Session Duration Warning**
 
-- If **Stop** is pressed within 10 seconds of pressing **Start**, a `tkinter` warning dialog is shown before saving.
-- The dialog displays the actual elapsed time, the minimum recommended duration, and a yes/no prompt to confirm whether to save.
-- Selecting **No** returns to the active logging state without saving or stopping the session.
-- Selecting **Yes** proceeds with the normal stop, summary, and save flow.
-- The minimum duration threshold is defined as `MIN_SESSION_SECONDS = 10` at the top of the script and can be adjusted.
+- Warning dialog if Stop is pressed within 10 seconds of Start.
+- `MIN_SESSION_SECONDS = 10` — adjustable constant.
 
 **4. Session Summary Popup on Stop**
 
-- When **Stop** is pressed (after any short-session confirmation), a `tkinter` info dialog displays a summary of the completed session before the file is saved.
-- Summary includes: session duration (minutes and seconds), number of valid data points, and min / average / max for Voltage, Current, Power, and State of Charge.
-- Gives the operator an at-a-glance sanity check before walking away from the test.
+- Shows session duration, data point count, and min/avg/max for all four metrics before saving.
 
 **5. Watchdog — Logger Health Monitor**
 
-- During an active session, the animation loop compares the current row count in `victron_log.csv` against the count from the previous tick.
-- If no new rows have appeared for 10 seconds, the status bar switches to a red warning message indicating the logger may have stopped or the device may be disconnected.
-- If new rows resume after the warning, the status bar automatically clears the warning and returns to the normal green logging state.
-- The watchdog timeout is defined as `WATCHDOG_TIMEOUT_SEC = 10` at the top of the script and can be adjusted.
-- Only one warning is shown per gap event — the warning does not repeat every tick.
-
-### README.md
-
-#### Updated
-
-**1. Session Controls and Behaviour Section**
-
-- Added new section documenting all five new session behaviours: control locking, start marker, minimum session duration warning, session summary, and watchdog.
-- Updated Session Recording step list to reflect that Start now also locks controls and draws the start marker.
-- Updated Charts section to note the green dashed start marker line.
-- Added note to the Notes section documenting the `MIN_SESSION_SECONDS` and `WATCHDOG_TIMEOUT_SEC` constants.
-- Updated version to 1.5.
+- Red status bar warning if no new CSV rows arrive for 10 seconds during a session.
+- Clears automatically when data resumes.
+- `WATCHDOG_TIMEOUT_SEC = 10` — adjustable constant.
 
 ---
 
@@ -66,32 +99,9 @@ All notable changes to this project are documented in this file. Entries are org
 
 **1. Structured Output Folder — Mirrors Hydraulic Automated Testing Tool**
 
-- Saved CSV files are no longer written to the script's working directory. Results are now saved to a structured folder under `C:\Users\mserowik\Documents\VictronConnect\test_results\` on Windows and `~/Documents/VictronConnect/test_results/` on Linux.
-- The folder structure mirrors the Hydraulic Automated Testing Tool convention from `gui.py`:
-  ```
-  test_results/{TruckType}/{SerialNumber}/{LoadStatus}/{YYYY-MM-DD_HH-MM}/
-  ```
-- Example output path:
-  ```
-  C:\Users\mserowik\Documents\VictronConnect\test_results\
-      RS1\9876567894\Unloaded\2026-03-20_14-43\
-          RS1_9876567894_Unloaded_2026-03-20_14-43.csv
-  ```
-- The output directory is created automatically using `Path.mkdir(parents=True, exist_ok=True)` if it does not already exist.
-- Platform detection uses `platform.system()` — the same approach used by `victron_logger.py` for serial port selection.
-
-### README.md
-
-#### Updated
-
-**1. Saved File Naming and Location Section**
-
-- Renamed section from "Saved File Naming" to "Saved File Naming and Location".
-- Added output root paths for Windows and Linux.
-- Added folder structure diagram matching the new `test_results/{TruckType}/{SerialNumber}/{LoadStatus}/{timestamp}/` layout.
-- Added a concrete example showing the full path for an RS1, Unloaded session.
-- Added a note in the Notes section clarifying that the Windows output path is hardcoded and must be updated in `OUTPUT_ROOT` if the username or path differs.
-- Updated version to 1.4.
+- Results saved to `C:\Users\mserowik\Documents\VictronConnect\test_results\` on Windows, `~/Documents/VictronConnect/test_results/` on Linux.
+- Folder structure: `test_results/{TruckType}/{SerialNumber}/{LoadStatus}/{YYYY-MM-DD_HH-MM}/`.
+- Output directory created automatically if it does not exist.
 
 ---
 
@@ -103,8 +113,7 @@ All notable changes to this project are documented in this file. Entries are org
 
 **1. Pinned Dependency Versions**
 
-- Updated `requirements.txt` to pin exact versions for all dependencies: `matplotlib==3.10.8` and `pyserial==3.5`.
-- Pinned versions ensure consistent behaviour across installations and prevent unintended breakage from upstream package updates.
+- `matplotlib==3.10.8` and `pyserial==3.5` pinned for consistent installations.
 
 ---
 
@@ -116,9 +125,7 @@ All notable changes to this project are documented in this file. Entries are org
 
 **1. Session Isolation — Clear Log on Start**
 
-- Pressing **Start** now clears `victron_log.csv` immediately before logging begins, retaining only the header row.
-- This ensures the saved CSV file at the end of each session contains only data collected during that session, not accumulated data from prior runs.
-- The clear operation is performed by `clear_log()`, which rewrites the file with the header row only. The logger (`victron_logger.py`) detects the fresh file and resumes appending new rows immediately.
+- Pressing Start clears `victron_log.csv` (header retained) so each saved file contains only current session data.
 
 ---
 
@@ -128,101 +135,44 @@ All notable changes to this project are documented in this file. Entries are org
 
 #### Features Added
 
-**1. Truck Type Selector**
+**1. Truck Type Selector** — `RS1` / `CR1` radio buttons, default `RS1`.
 
-- Added `RS1` / `CR1` radio buttons to the control strip. Default selection is `RS1`, matching the Hydraulic Automated Testing Tool default.
-- The selected truck type is embedded in the saved CSV filename and output folder path.
+**2. Load Status Selector** — `Unloaded` / `Loaded` radio buttons, default `Unloaded`.
 
-**2. Load Status Selector**
-
-- Added `Unloaded` / `Loaded` radio buttons to the control strip. Default selection is `Unloaded`, matching the Hydraulic Automated Testing Tool default.
-- The selected load status is embedded in the saved CSV filename and output folder path.
-
-**3. Saved Filename Convention**
-
-- Saved files follow the same naming convention as the Hydraulic Automated Testing Tool: `{TruckType}_{Serial}_{LoadStatus}_{YYYY-MM-DD_HH-MM}.csv`.
-- Example: `RS1_9876567894_Unloaded_2026-03-20_14-43.csv`.
+**3. Saved Filename Convention** — `{TruckType}_{Serial}_{LoadStatus}_{YYYY-MM-DD_HH-MM}.csv`.
 
 #### Removed
 
-**4. Radio Button Group Labels**
-
-- Removed the "Truck:" and "Load Status:" text labels that appeared above the radio button groups. The radio options are self-descriptive and the labels added visual clutter.
+**4. Radio Button Group Labels** — "Truck:" and "Load Status:" text labels removed.
 
 ---
 
 ## [2026-03-20]
 
-### victron_live_graph.py
+### victron_live_graph.py — Initial Release
 
-#### Initial Release
-
-**1. Serial Number Entry and Validation**
-
-- Added a `TextBox` widget for manual serial number entry.
-- Validation enforces three rules before a session can start: exactly 10 digits, digits only, and must start with `9`. Any violation is reported in the status bar and blocks the session from starting.
-
-**2. Start and Stop Controls**
-
-- Added **Start** and **Stop** buttons embedded in the matplotlib figure above the chart area.
-- Start validates the serial number and begins the live plot update loop.
-- Stop halts the update loop and immediately saves the session CSV.
-
-**3. Status Bar**
-
-- Added a status text area to the right of the Start/Stop buttons.
-- Displays idle instructions, active logging details (serial, truck, load, start time), validation errors, and save confirmation or failure messages.
-
-**4. Saved File on Stop**
-
-- On Stop, a copy of `victron_log.csv` is saved with a filename derived from truck type, serial number, load status, and the session start timestamp.
-
-**5. Live Chart Display**
-
-- Four subplots displayed simultaneously: Voltage (V), Current (A), Power (W), State of Charge (%).
-- Charts update every second using `FuncAnimation`.
-- X-axis displays real timestamps in `HH:MM` format using `matplotlib.dates`.
-- Data gaps (e.g. logger restart) appear as visual breaks in the line rather than being compressed.
-
-**6. Zero-Row Filtering**
-
-- Rows where Voltage is zero or less are excluded before plotting. These rows are produced by the logger when a partial VE.Direct serial frame is received and do not represent real measurements.
-
-**7. Rolling Data Window**
-
-- The last 200 raw rows from `victron_log.csv` are read on each refresh. After zero-row filtering this yields approximately 100 valid data points.
+**1.** Serial number entry with validation (10 digits, digits only, starts with `9`).
+**2.** Start / Stop buttons with status bar.
+**3.** Four live subplots: Voltage, Current, Power, State of Charge.
+**4.** Real timestamps on x-axis.
+**5.** Zero-row filtering.
+**6.** Rolling 200-row data window.
 
 ---
 
-### victron_logger.py
+### victron_logger.py — Initial Release
 
-#### Initial Release
-
-**1. VE.Direct Serial Reader**
-
-- Reads the Victron VE.Direct text protocol from a USB serial port at 19200 baud.
-- Assembles key-value pairs from tab-delimited lines and commits a complete data row on each `Checksum` frame boundary.
-
-**2. Cross-Platform Port Detection**
-
-- Automatically selects `COM15` on Windows and `/dev/ttyUSB0` on Linux via `platform.system()`. Edit `get_port()` to override.
-
-**3. Data Validation and Filtering**
-
-- Only writes a row when all four required fields (`V`, `I`, `P`, `SOC`) are present in the current frame.
-- Rows where the calculated voltage is zero or less are discarded before writing.
-
-**4. CSV Output**
-
-- Appends data to `victron_log.csv` in the working directory. Creates the file with a header row on first run if it does not exist.
-- Calls `f.flush()` after each row to ensure data is written to disk immediately and visible to the live graph.
+**1.** VE.Direct serial reader at 19200 baud.
+**2.** Cross-platform port detection (`COM15` Windows / `/dev/ttyUSB0` Linux).
+**3.** Frame validation — all four fields required before writing.
+**4.** CSV append with immediate flush.
 
 ---
 
 ### Known Limitations
 
-- `victron_log.csv` is excluded from git via `.gitignore`. Saved session files are also excluded by the `*.csv` rule. Files must be backed up manually after each session.
-- The logger serial port defaults are `COM15` (Windows) and `/dev/ttyUSB0` (Linux). If your system uses a different port, `get_port()` in `victron_logger.py` must be edited manually — there is no GUI port selector.
-- The Windows output root path is hardcoded to `C:\Users\mserowik\Documents\VictronConnect\test_results`. If the username or path differs, update `OUTPUT_ROOT` in `victron_live_graph.py`.
-- There is a brief moment after pressing Start where `victron_log.csv` contains only the header row while the logger has not yet appended new data. The charts will appear empty for up to one second before new readings arrive.
-- The session summary popup calculates statistics from the rolling 200-row window, not the full session. For very long sessions the summary reflects only the most recent data points.
+- `victron_log.csv` and saved session files are excluded from git (`*.csv`). Back up manually after each session.
+- The Windows output root path is hardcoded. Update `OUTPUT_ROOT` in `victron_monitor.py` if the username or path differs.
+- Port detection relies on the FTDI VID/PID (`0x0403` / `0x6015`). If a third-party VE.Direct cable uses a different chip, it may not be detected by VID/PID but may still match on the description string fallback.
+- The session summary calculates statistics from the rolling 200-row window. For very long sessions this reflects only the most recent data points.
+- There is a brief moment after pressing Start where `victron_log.csv` contains only the header row. Charts will appear empty for up to one second before new readings arrive.
