@@ -3,6 +3,8 @@ import shutil
 import platform
 import threading
 import time
+import tkinter as tk
+from tkinter import messagebox
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import matplotlib.widgets as mwidgets
@@ -21,20 +23,19 @@ except ImportError:
 # ── Configuration ─────────────────────────────────────────────────────────────
 CSV_FILE             = "victron_log.csv"
 BAUD                 = 19200
-MIN_SESSION_SECONDS  = 10    
+MIN_SESSION_SECONDS  = 5    
 WATCHDOG_TIMEOUT_SEC = 10    
 
 VICTRON_VID = 0x0403
 VICTRON_PID = 0x6015
 
-# ── Output Root — Mirrors gui.py structure ────────────────────────────────────
-# Using a raw string (r"") is critical for Windows paths to work correctly
+# ── Output Root — Mirrors gui.py structure ────────────────────────
 if platform.system() == "Windows":
     OUTPUT_ROOT = Path(r"C:\Users\mserowik\Documents\VictronConnect\test_results")
 else:
     OUTPUT_ROOT = Path.home() / "Documents" / "VictronConnect" / "test_results"
 
-# ── State ─────────────────────────────────────────────────────────────────────
+# ── Global State ──────────────────────────────────────────────────────────────
 logging_active     = False
 serial_number      = ""
 truck_type         = "RS1"
@@ -43,8 +44,6 @@ log_start_time     = None
 last_row_time      = None
 last_row_count     = 0
 watchdog_warned    = False
-start_marker_dt    = None
-start_marker_lines = []
 logger_status      = "Starting..."
 
 # ── Helper Functions ──────────────────────────────────────────────────────────
@@ -61,7 +60,7 @@ def find_victron_port():
     return None
 
 def check_write_permission():
-    """Verify output directory is writable before starting test."""
+    """Verify output directory is writable before starting."""
     try:
         OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
         test_file = OUTPUT_ROOT / ".write_test"
@@ -120,40 +119,34 @@ def _logger_thread():
 _logger_thread_obj = threading.Thread(target=_logger_thread, daemon=True)
 _logger_thread_obj.start()
 
-# ── Save CSV (The Fix for Folder Creation) ────────────────────────────────────
+# ── Save Logic (Folder Creation & Confirmation) ───────────────────────────────
 def save_csv():
-    """
-    Saves log using gui.py exact convention: 
-    Path:     test_results / {Truck} / {Serial} / {Load} / {YYYYMMDD_HHMMSS} /
-    Filename: {Truck}_{Serial}_{Load}_{YYYY-MM-DD_HH-MM}.csv
-    """
-    if log_start_time is None:
-        print("Save aborted: No session start time recorded.")
-        return
+    """Builds path and filename according to gui.py requirements."""
+    if log_start_time is None: return
 
-    # Folder/File Timestamps match gui.py logic
+    # Timestamps match gui.py logic
     ts_folder = log_start_time.strftime("%Y%m%d_%H%M%S")
-    ts_filename = log_start_time.strftime("%Y-%m-%d_%H-%M")
+    ts_file   = log_start_time.strftime("%Y-%m-%d_%H-%M")
     
-    filename = f"{truck_type}_{serial_number}_{load_status}_{ts_filename}.csv"
-    
-    # Construct total path
+    filename = f"{truck_type}_{serial_number}_{load_status}_{ts_file}.csv"
     output_dir = OUTPUT_ROOT / truck_type / serial_number / load_status / ts_folder
 
-    print(f"Attempting to create directory: {output_dir}") # Console verification
-
     try:
-        # parents=True creates the entire folder tree if it doesn't exist
+        # 1. Create Folder Hierarchy
         output_dir.mkdir(parents=True, exist_ok=True)
         
+        # 2. Copy the session data
         dest = output_dir / filename
-        shutil.copy2(CSV_FILE, dest) # Copy temp file to permanent location
+        shutil.copy2(CSV_FILE, dest)
         
-        set_status(f"Saved: {filename}", "steelblue")
-        print(f"SUCCESS: File saved to {dest}")
+        # 3. UI Confirmation
+        set_status(f"File Created: {filename}", "steelblue")
+        messagebox.showinfo("Success", f"Session Saved Successfully!\n\nFile: {filename}\nFolder: {ts_folder}")
+        print(f"SUCCESS: Saved to {dest}")
+        
     except Exception as e:
-        set_status(f"Save failed: {e}", "crimson")
-        print(f"CRITICAL SAVE ERROR: {e}")
+        messagebox.showerror("Save Error", f"Failed to create file:\n{str(e)}")
+        print(f"SAVE ERROR: {e}")
 
 def read_data():
     ts, v, i, p, s = [], [], [], [], []
@@ -202,41 +195,39 @@ for ax, title, unit in zip(axs, ["Voltage", "Current", "Power", "SOC"], ["V", "A
     ax.set_title(title); ax.set_ylabel(unit)
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
 
-# ── Logic ─────────────────────────────────────────────────────────────────────
+# ── Callbacks ─────────────────────────────────────────────────────────────────
 def on_start(event):
     global logging_active, serial_number, log_start_time
-    
     s_text = serial_box.text.strip()
+    
     if len(s_text) != 10 or not s_text.isdigit() or s_text[0] != '9':
-        set_status("Invalid Serial (10 digits, starts with 9)", "crimson")
+        set_status("Invalid Serial: 10 digits starting with 9", "crimson")
         return
     
     ok, err = check_write_permission()
     if not ok:
-        set_status(f"Permission Error: {err}", "crimson")
+        set_status(f"Path Error: {err}", "crimson")
         return
 
-    # Start the session
+    # LOCK Metadata for this session
     log_start_time = datetime.now()
     serial_number = s_text
     logging_active = True
     
-    # Clean the temp log file
+    # Wipe temporary log
     with open(CSV_FILE, "w", newline="") as f:
         csv.writer(f).writerow(["Timestamp", "Voltage", "Current", "Power", "SOC"])
     
-    set_status(f"LOGGING: {truck_type}_{serial_number}_{load_status}", "green")
-    print(f"Session started: {log_start_time.strftime('%H:%M:%S')}")
+    set_status(f"RECORDING: {truck_type}_{serial_number}_{load_status}", "green")
 
 def on_stop(event):
     global logging_active
     if not logging_active: return
     logging_active = False
-    save_csv() # This triggers the folder creation and file copy
+    save_csv() # This triggers the folder creation and confirmation
 
 btn_start.on_clicked(on_start)
 btn_stop.on_clicked(on_stop)
-
 radio_truck.on_clicked(lambda l: globals().update(truck_type=l))
 radio_load.on_clicked(lambda l: globals().update(load_status=l))
 
