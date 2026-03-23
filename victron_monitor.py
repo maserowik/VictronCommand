@@ -12,7 +12,7 @@ from matplotlib.animation import FuncAnimation
 from datetime import datetime
 from pathlib import Path
 
-# ── Serial import (graceful fallback if pyserial not installed) ───────────────
+# ── Serial import ─────────────────────────────────────────────────────────────
 try:
     import serial
     import serial.tools.list_ports
@@ -21,72 +21,36 @@ except ImportError:
     SERIAL_AVAILABLE = False
 
 # ── Configuration ─────────────────────────────────────────────────────────────
-CSV_FILE             = "victron_log.csv"
-BAUD                 = 19200
-MIN_SESSION_SECONDS  = 5    
-WATCHDOG_TIMEOUT_SEC = 10    
-
+CSV_FILE = "victron_log.csv"
+BAUD = 19200
 VICTRON_VID = 0x0403
 VICTRON_PID = 0x6015
 
-# ── Output Root — Mirrors gui.py structure ────────────────────────
 if platform.system() == "Windows":
     OUTPUT_ROOT = Path(r"C:\Users\mserowik\Documents\VictronConnect\test_results")
 else:
     OUTPUT_ROOT = Path.home() / "Documents" / "VictronConnect" / "test_results"
 
 # ── Global State ──────────────────────────────────────────────────────────────
-logging_active     = False
-serial_number      = ""
-truck_type         = "RS1"
-load_status        = "Unloaded"
-log_start_time     = None
-last_row_time      = None
-last_row_count     = 0
-watchdog_warned    = False
-logger_status      = "Starting..."
+logging_active = False
+serial_number = ""
+truck_type = "RS1"
+load_status = "Unloaded"
+log_start_time = None
+logger_status = "Starting..."
 
-# ── Helper Functions ──────────────────────────────────────────────────────────
-def find_victron_port():
-    if not SERIAL_AVAILABLE: return None
-    ports = serial.tools.list_ports.comports()
-    for port in ports:
-        if port.vid == VICTRON_VID and port.pid == VICTRON_PID:
-            return port.device
-        desc = (port.description or "").lower()
-        mfr  = (port.manufacturer or "").lower()
-        if "victron" in desc or "ve.direct" in desc or "victron" in mfr:
-            return port.device
-    return None
-
-def check_write_permission():
-    """Verify output directory is writable before starting."""
-    try:
-        OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
-        test_file = OUTPUT_ROOT / ".write_test"
-        test_file.touch()
-        test_file.unlink()
-        return True, ""
-    except Exception as e:
-        return False, str(e)
-
-# ── Logger thread ─────────────────────────────────────────────────────────────
-def _init_csv():
-    p = Path(CSV_FILE)
-    if not p.exists() or p.stat().st_size == 0:
-        with open(CSV_FILE, "w", newline="") as f:
-            csv.writer(f).writerow(["Timestamp", "Voltage", "Current", "Power", "SOC"])
-
+# ── Logger Thread ─────────────────────────────────────────────────────────────
 def _logger_thread():
     global logger_status
     if not SERIAL_AVAILABLE:
         logger_status = "ERROR: pyserial not installed"
         return
-    _init_csv()
     while True:
-        port = find_victron_port()
+        ports = serial.tools.list_ports.comports()
+        port = next((p.device for p in ports if (p.vid == VICTRON_VID and p.pid == VICTRON_PID) or "victron" in (p.description or "").lower()), None)
+        
         if port is None:
-            logger_status = "Searching for Victron device..."
+            logger_status = "Searching for Victron..."
             time.sleep(5)
             continue
         try:
@@ -99,9 +63,7 @@ def _logger_thread():
                     line = ser.readline().decode(errors="ignore").strip()
                     if not line: continue
                     parts = line.split("\t")
-                    if len(parts) == 2:
-                        key, value = parts
-                        data[key] = value
+                    if len(parts) == 2: data[parts[0]] = parts[1]
                     if "Checksum" in line:
                         if all(k in data for k in ("V", "I", "P", "SOC")):
                             try:
@@ -116,15 +78,13 @@ def _logger_thread():
             logger_status = "Disconnected - Retrying..."
             time.sleep(5)
 
-_logger_thread_obj = threading.Thread(target=_logger_thread, daemon=True)
-_logger_thread_obj.start()
+threading.Thread(target=_logger_thread, daemon=True).start()
 
-# ── Save Logic (Folder Creation & Confirmation) ───────────────────────────────
+# ── Save Logic ────────────────────────────────────────────────────────────────
 def save_csv():
-    """Builds path and filename according to gui.py requirements."""
+    """Builds path and filename according to gui.py exact logic."""
     if log_start_time is None: return
 
-    # Timestamps match gui.py logic
     ts_folder = log_start_time.strftime("%Y%m%d_%H%M%S")
     ts_file   = log_start_time.strftime("%Y-%m-%d_%H-%M")
     
@@ -132,53 +92,32 @@ def save_csv():
     output_dir = OUTPUT_ROOT / truck_type / serial_number / load_status / ts_folder
 
     try:
-        # 1. Create Folder Hierarchy
         output_dir.mkdir(parents=True, exist_ok=True)
-        
-        # 2. Copy the session data
         dest = output_dir / filename
         shutil.copy2(CSV_FILE, dest)
-        
-        # 3. UI Confirmation
-        set_status(f"File Created: {filename}", "steelblue")
-        messagebox.showinfo("Success", f"Session Saved Successfully!\n\nFile: {filename}\nFolder: {ts_folder}")
-        print(f"SUCCESS: Saved to {dest}")
-        
+        set_status(f"Saved Successfully: {filename}", "steelblue")
+        print(f"File created at: {dest}")
     except Exception as e:
-        messagebox.showerror("Save Error", f"Failed to create file:\n{str(e)}")
         print(f"SAVE ERROR: {e}")
+        messagebox.showerror("Save Error", f"Failed to create file:\n{e}")
 
-def read_data():
-    ts, v, i, p, s = [], [], [], [], []
-    try:
-        with open(CSV_FILE, "r") as f:
-            reader = csv.DictReader(f)
-            for row in list(reader)[-200:]:
-                ts.append(datetime.fromisoformat(row["Timestamp"]))
-                v.append(float(row["Voltage"]))
-                i.append(float(row["Current"]))
-                p.append(float(row["Power"]))
-                s.append(float(row["SOC"]))
-    except: pass
-    return ts, v, i, p, s
-
-# ── GUI Setup ─────────────────────────────────────────────────────────────────
+# ── GUI Elements ──────────────────────────────────────────────────────────────
 fig = plt.figure(figsize=(14, 9))
-fig.suptitle("Victron Battery Monitor", fontsize=13, y=0.99)
+fig.suptitle("Victron Battery Monitor", fontsize=13)
 
-ax_serial = fig.add_axes([0.06, 0.925, 0.20, 0.042])
+ax_serial = fig.add_axes([0.06, 0.92, 0.20, 0.04])
 serial_box = mwidgets.TextBox(ax_serial, "Serial: ", initial="", color="white")
 
-ax_truck = fig.add_axes([0.30, 0.900, 0.16, 0.075], frameon=False)
+ax_truck = fig.add_axes([0.30, 0.90, 0.15, 0.07], frameon=False)
 radio_truck = mwidgets.RadioButtons(ax_truck, ("RS1", "CR1"))
 
-ax_load = fig.add_axes([0.49, 0.900, 0.18, 0.075], frameon=False)
+ax_load = fig.add_axes([0.48, 0.90, 0.15, 0.07], frameon=False)
 radio_load = mwidgets.RadioButtons(ax_load, ("Unloaded", "Loaded"))
 
-ax_start, ax_stop = fig.add_axes([0.06, 0.870, 0.08, 0.040]), fig.add_axes([0.15, 0.870, 0.08, 0.040])
+ax_start, ax_stop = fig.add_axes([0.06, 0.86, 0.08, 0.04]), fig.add_axes([0.15, 0.86, 0.08, 0.04])
 btn_start, btn_stop = mwidgets.Button(ax_start, "Start", color="#d4edda"), mwidgets.Button(ax_stop, "Stop", color="#f8d7da")
 
-ax_status = fig.add_axes([0.25, 0.862, 0.72, 0.052], frameon=False)
+ax_status = fig.add_axes([0.25, 0.85, 0.70, 0.05], frameon=False)
 ax_status.axis("off")
 status_txt = ax_status.text(0, 0.5, "", va="center", fontsize=9, color="gray")
 
@@ -186,60 +125,58 @@ def set_status(msg, color="gray"):
     status_txt.set_text(msg); status_txt.set_color(color); fig.canvas.draw_idle()
 
 # Plots
-positions = [(0.06, 0.48, 0.40, 0.34), (0.55, 0.48, 0.40, 0.34), (0.06, 0.06, 0.40, 0.34), (0.55, 0.06, 0.40, 0.34)]
-axs = [fig.add_axes(p) for p in positions]
-lines = [axs[0].plot([], [], 'steelblue')[0], axs[1].plot([], [], 'tomato')[0], 
-         axs[2].plot([], [], 'darkorange')[0], axs[3].plot([], [], 'seagreen')[0]]
-
-for ax, title, unit in zip(axs, ["Voltage", "Current", "Power", "SOC"], ["V", "A", "W", "%"]):
-    ax.set_title(title); ax.set_ylabel(unit)
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+axs = [fig.add_axes(p) for p in [(0.06, 0.48, 0.40, 0.32), (0.55, 0.48, 0.40, 0.32), (0.06, 0.08, 0.40, 0.32), (0.55, 0.08, 0.40, 0.32)]]
+lines = [axs[0].plot([], [], 'steelblue')[0], axs[1].plot([], [], 'tomato')[0], axs[2].plot([], [], 'darkorange')[0], axs[3].plot([], [], 'seagreen')[0]]
+for ax, t, u in zip(axs, ["Voltage", "Current", "Power", "SOC"], ["V", "A", "W", "%"]):
+    ax.set_title(t); ax.set_ylabel(u); ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
 
 # ── Callbacks ─────────────────────────────────────────────────────────────────
 def on_start(event):
     global logging_active, serial_number, log_start_time
-    s_text = serial_box.text.strip()
-    
-    if len(s_text) != 10 or not s_text.isdigit() or s_text[0] != '9':
-        set_status("Invalid Serial: 10 digits starting with 9", "crimson")
-        return
-    
-    ok, err = check_write_permission()
-    if not ok:
-        set_status(f"Path Error: {err}", "crimson")
-        return
-
-    # LOCK Metadata for this session
-    log_start_time = datetime.now()
-    serial_number = s_text
-    logging_active = True
-    
-    # Wipe temporary log
-    with open(CSV_FILE, "w", newline="") as f:
-        csv.writer(f).writerow(["Timestamp", "Voltage", "Current", "Power", "SOC"])
-    
-    set_status(f"RECORDING: {truck_type}_{serial_number}_{load_status}", "green")
+    s = serial_box.text.strip()
+    if len(s) == 10 and s.isdigit() and s[0] == '9':
+        log_start_time, serial_number, logging_active = datetime.now(), s, True
+        with open(CSV_FILE, "w", newline="") as f:
+            csv.writer(f).writerow(["Timestamp", "Voltage", "Current", "Power", "SOC"])
+        set_status(f"RECORDING: {truck_type}_{serial_number}_{load_status}", "green")
+    else:
+        set_status("Error: Serial must be 10 digits starting with 9", "crimson")
 
 def on_stop(event):
     global logging_active
-    if not logging_active: return
-    logging_active = False
-    save_csv() # This triggers the folder creation and confirmation
+    if logging_active:
+        logging_active = False
+        save_csv()
+
+def safe_exit():
+    """Safety net: Ask to save if window is closed during a test."""
+    if logging_active:
+        if messagebox.askyesno("Exit", "Logging is active! Save results before closing?"):
+            save_csv()
+    plt.close('all')
 
 btn_start.on_clicked(on_start)
 btn_stop.on_clicked(on_stop)
 radio_truck.on_clicked(lambda l: globals().update(truck_type=l))
 radio_load.on_clicked(lambda l: globals().update(load_status=l))
 
+# Connect the window 'X' button to safe_exit
+fig.canvas.manager.window.protocol("WM_DELETE_WINDOW", safe_exit)
+
 def update(_frame):
     if not logging_active:
         set_status(f"Logger: {logger_status}", "gray")
         return
-    ts, v, i, p, s = read_data()
-    if not ts: return
-    for line, data in zip(lines, [v, i, p, s]):
-        line.set_data(ts, data)
-        line.axes.relim(); line.axes.autoscale_view()
+    try:
+        ts, v, i, p, s = [], [], [], [], []
+        with open(CSV_FILE, "r") as f:
+            for row in list(csv.DictReader(f))[-200:]:
+                ts.append(datetime.fromisoformat(row["Timestamp"]))
+                v.append(float(row["Voltage"])); i.append(float(row["Current"]))
+                p.append(float(row["Power"])); s.append(float(row["SOC"]))
+        for line, data in zip(lines, [v, i, p, s]):
+            line.set_data(ts, data); line.axes.relim(); line.axes.autoscale_view()
+    except: pass
     fig.canvas.draw_idle()
 
 ani = FuncAnimation(fig, update, interval=1000, cache_frame_data=False)
