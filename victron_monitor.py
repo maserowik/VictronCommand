@@ -57,24 +57,27 @@ def _logger_thread():
             ser = serial.Serial(port, BAUD, timeout=1)
             logger_status = f"Connected: {port}"
             data = {}
-            with open(CSV_FILE, "a", newline="") as f:
-                writer = csv.writer(f)
-                while True:
-                    line = ser.readline().decode(errors="ignore").strip()
-                    if not line: continue
-                    parts = line.split("\t")
-                    if len(parts) == 2: data[parts[0]] = parts[1]
-                    if "Checksum" in line:
-                        if all(k in data for k in ("V", "I", "P", "SOC")):
-                            try:
-                                v, i, p = float(data["V"])/1000, float(data["I"])/1000, float(data["P"])
-                                soc = float(data["SOC"])/10
-                                if v > 0:
+            
+            while True:
+                line = ser.readline().decode(errors="ignore").strip()
+                if not line: continue
+                parts = line.split("\t")
+                if len(parts) == 2: data[parts[0]] = parts[1]
+                
+                if "Checksum" in line:
+                    if all(k in data for k in ("V", "I", "P", "SOC")):
+                        try:
+                            v, i, p = float(data["V"])/1000, float(data["I"])/1000, float(data["P"])
+                            soc = float(data["SOC"])/10
+                            
+                            # ONLY log data when the Start button has been clicked
+                            if v > 0 and logging_active:
+                                with open(CSV_FILE, "a", newline="") as f:
+                                    writer = csv.writer(f)
                                     writer.writerow([datetime.now().isoformat(), v, i, p, soc])
-                                    f.flush()
-                            except: pass
-                        data = {}
-        except:
+                        except: pass
+                    data = {}
+        except Exception as e:
             logger_status = "Disconnected - Retrying..."
             time.sleep(5)
 
@@ -166,9 +169,21 @@ def lock_controls(lock):
     """Disable interaction with configuration during test."""
     serial_box.set_active(not lock)
     ax_serial.set_facecolor("#e0e0e0" if lock else "white")
+    
     for rb in [radio_truck, radio_load]:
-        for circle in rb.circles: circle.set_visible(not lock)
-        for label in rb.labels: label.set_color("gray" if lock else "black")
+        # Lock interactions
+        rb.active = not lock
+        
+        # Handle the visual graphic based on the matplotlib version
+        if hasattr(rb, 'circles'):
+            for circle in rb.circles: 
+                circle.set_visible(not lock)
+        elif hasattr(rb, '_buttons'):
+            rb._buttons.set_visible(not lock)
+            
+        for label in rb.labels: 
+            label.set_color("gray" if lock else "black")
+            
     btn_start.color = "#f0f0f0" if lock else "#d4edda"
     btn_start.hovercolor = "#f0f0f0" if lock else "#a8d5b5"
 
