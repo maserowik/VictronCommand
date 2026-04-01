@@ -20,6 +20,9 @@ log_file = filedialog.askopenfilename(
 if not log_file:
     print("No log file selected. Exiting.")
     sys.exit()
+    
+# Print the clean file name immediately after selection
+print(f" -> Selected Log: {os.path.basename(log_file)}\n")
 
 # 3. Prompt user to select the CSV File
 print("Waiting for CSV file selection...")
@@ -31,8 +34,9 @@ if not csv_file:
     print("No CSV file selected. Exiting.")
     sys.exit()
 
-print(f"Processing Log: {log_file}")
-print(f"Processing CSV: {csv_file}")
+# Print the clean file name immediately after selection
+print(f" -> Selected CSV: {os.path.basename(csv_file)}\n")
+
 print("Generating plot...")
 
 # 4. Extract Meta Data from the CSV Filename
@@ -95,7 +99,7 @@ def fmt(data):
     # Enforces an exact character width (8.2f) so decimals and negative signs form perfect columns
     return f"Min: {data.min():>8.2f}   |   Avg: {data.mean():>8.2f}   |   Max: {data.max():>8.2f}"
 
-# 7. Format the summary text into strict, left-justified columns (Removed leading spaces)
+# 7. Format the summary text into strict, left-justified columns
 summary_text = (
     f"TEST RUN DETAILS                  SESSION SUMMARY\n"
     f"──────────────────────────────    ────────────────────────────────────────────────────────────────────────\n"
@@ -140,8 +144,8 @@ if not df_primary_moves.empty:
 
 # Set labels and title
 ax.set_title(f"Victron Sensor Data Overview: {truck_type} ({serial_num})", fontsize=15, fontweight='bold', pad=15)
-ax.set_xlabel('Time (HH:MM:SS)', fontsize=12)
 ax.set_ylabel('Sensor Values', fontsize=12)
+
 ax.legend(loc='upper right') 
 ax.grid(True, linestyle=':', alpha=0.7)
 
@@ -149,7 +153,7 @@ ax.grid(True, linestyle=':', alpha=0.7)
 ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
 plt.xticks(rotation=45)
 
-# 10. Add the Summary Text Box - NOW LEFT JUSTIFIED
+# 10. Add the Summary Text Box - LEFT JUSTIFIED
 # x=0.08 aligns it nicely with the left side of the graph's plotting area
 fig.text(0.08, 0.04, summary_text, fontsize=11, family='monospace', 
          horizontalalignment='left', verticalalignment='bottom', 
